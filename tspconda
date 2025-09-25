@@ -1,0 +1,65 @@
+#!/bin/bash
+# tspconda: 以指定 conda 环境提交 tsp 任务，并可选绑定 GPU
+# 用法:
+#   tspconda [-g|--gpu "0"|"0,1"] <conda_env> <command...>
+# 示例:
+#   tspconda qwen_ python train.py
+#   tspconda --gpu 0 qwen_ python train.py --cfg cfg.yaml
+#   tspconda -g 0,2 qwen_ bash run.sh --epochs 20
+
+set -euo pipefail
+
+usage() {
+	  echo "用法: $0 [-g|--gpu <ids>] <conda_env> <command...>"
+	    echo "示例: $0 --gpu 0 qwen_ python train.py --config cfg.yaml"
+    }
+
+    GPU_IDS=""
+    # 解析可选参数
+    while [[ $# -gt 0 ]]; do
+	      case "$1" in
+		          -g|--gpu|--gpus)
+				        if [[ ${2:-} == "" ]]; then
+						        echo "错误: --gpu 需要一个参数，例如: --gpu 0 或 --gpu 0,1"
+							        exit 1
+								      fi
+								            GPU_IDS="$2"
+									          shift 2
+										        ;;
+											    -h|--help)
+												          usage; exit 0
+													        ;;
+														    *)
+															          break
+																        ;;
+																	  esac
+																  done
+
+																  # 剩余参数应至少包含: <env> <command...>
+																  if [[ $# -lt 2 ]]; then
+																	    usage; exit 1
+																  fi
+
+																  ENV_NAME="$1"
+																  shift  # 去掉环境名，余下的是用户命令
+																  USER_CMD=("$@")
+
+																  # 把用户命令安全地拼成一行（带正确转义）
+																  CMD_STR=""
+																  for arg in "${USER_CMD[@]}"; do
+																	    # %q 会对参数做 shell 安全转义
+																	      CMD_STR+=" $(printf '%q' "$arg")"
+																      done
+																      CMD_STR="${CMD_STR# }"
+
+																      # 组装在子 shell 中执行的指令串
+																      INNER="source ~/miniconda3/etc/profile.d/conda.sh && conda activate ${ENV_NAME} && "
+																      if [[ -n "$GPU_IDS" ]]; then
+																	        INNER+="export CUDA_VISIBLE_DEVICES=${GPU_IDS} && "
+																      fi
+																      # 用 exec 替换进程，避免额外子进程
+																      INNER+="exec ${CMD_STR}"
+
+																      # 提交给 tsp
+																      tsp bash -c "$INNER"
+
